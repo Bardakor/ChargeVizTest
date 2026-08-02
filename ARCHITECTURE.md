@@ -38,20 +38,9 @@ flowchart LR
 The tuple crossing the amber→blue boundary is
 `(source, location_id, evse_uid, evse_id, status, source_last_updated)`. Everything downstream of
 the parser knows only that tuple, which is why a new feed costs an adapter, not a pipeline. Network
-I/O and parsing run **outside** the write transaction, and every attempt ends as exactly one ledger
-row: one classifier (`collector._describe_failure`) maps rate limits, HTTP errors, network faults,
-unparseable bodies and internal bugs onto the same persistence path.
-
-## Invariants the code enforces
-
-- File locks on endpoint and database admit **one** collector, **one** request in flight.
-- Request **starts** are ≥ 120 s apart, across restarts too — cadence is re-derived from the
-  persisted ledger, not process memory.
-- First sight of an EVSE is a **baseline**, never a change. Only a differing status **value** makes
-  one; a moving `last_updated` does not.
-- Absence is not a status: a missing EVSE writes an audit row, never a fabricated transition.
-- A failed or invalid snapshot leaves state untouched. A committed snapshot is all-or-nothing.
-- Sessions derive from immutable events, so the rules can change without re-collecting.
+I/O and parsing run **outside** the write transaction, and one classifier
+(`collector._describe_failure`) maps rate limits, HTTP errors, network faults, unparseable bodies
+and internal bugs onto a single persistence path, so every attempt ends as exactly one ledger row.
 
 ## Generic vs. per source
 
@@ -61,6 +50,16 @@ unparseable bodies and internal bugs onto the same persistence path.
 | Raw hashing and archive contract | Format parsing and schema validation |
 | Canonical EVSE observation and transactional reducer | External identity and status vocabulary mapping |
 | Event and session transforms, quality metrics | Full-vs-partial snapshot rule, timestamp trust rule |
+
+## Invariants the code enforces
+
+- One collector, one request in flight — file locks on both endpoint and database.
+- Request **starts** are ≥ 120 s apart, across restarts too: cadence is re-derived from the
+  persisted ledger, not process memory.
+- First sight of an EVSE is a **baseline**, never a change; only a differing status **value** makes
+  one. Absence is not a status — a missing EVSE writes an audit row, never a fabricated transition.
+- A failed or invalid snapshot leaves state untouched; a committed one is all-or-nothing.
+- Sessions derive from immutable events, so the rules can change without re-collecting.
 
 ## Scaling to 100+ sources
 
@@ -75,14 +74,8 @@ isolation or independent scaling demand it — not because there are 100 sources
 scheduler: schema contracts, replay tests, per-source freshness and error SLOs, and a quarantine for
 bad payloads.
 
-## Throughput is not the constraint
-
-A synthetic 30,000-EVSE snapshot (10.2× the live feed) parses and reduces in **270–380 ms p95**
-across nine runs — the high end when the machine is busy running the test suite at the same time.
-That is **0.22–0.32 %** of the 120 s interval, or roughly 80,000–105,000 EVSEs/s. In the live run
-the *fetch* took 21.4 s on average (3.76 MB, served uncompressed) against 48 ms of local parse +
-persist. The source owns the latency budget, not the pipeline.
-
-The hard production problems are semantic: stable identity across redeploys, heterogeneous status
-meaning, partial snapshots, source timestamp quality, and transitions that happen entirely between
-two polls.
+Throughput is not the constraint. A synthetic 30,000-EVSE snapshot (10.2× the live feed) parses and
+reduces in **270–380 ms p95** across nine runs — under 0.32 % of the 120 s interval — while the live
+*fetch* took 21.4 s against 48 ms of local work. The hard problems are semantic: stable identity
+across redeploys, heterogeneous status meaning, partial snapshots, source timestamp quality, and
+transitions that happen entirely between two polls.
