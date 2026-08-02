@@ -46,7 +46,10 @@ It is a worse metric than it looks. Three things I would say out loud before any
 minutes in a deck.
 
 **The denominator is not a random sample.** The run touched 1 487 episodes and only 519 of them
-have both a beginning and an end inside the window — 34.9 %. A long session is structurally more
+have both a beginning and an end inside the window — 34.9 %. The 668 left-censored episodes are not
+an artefact of the code: they are the 22.7 % of the fleet that was already charging at the first
+poll, which is the same 22.7 % that appears as peak occupancy in the table below. You cannot know
+when those sessions started, and no amount of polling after the fact recovers it. A long session is structurally more
 likely to be cut off by the two-hour boundary and dropped, which drags the mean down. An episode
 that opens and closes between two polls is never seen at all, which pushes it up. I cannot measure
 either effect from a two-hour run, so I am not going to claim the bias points one way. What I can
