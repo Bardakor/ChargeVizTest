@@ -10,7 +10,7 @@ three separate agents so they would not agree with each other by default: one at
 hostile hiring panel.
 
 **Claude Code (Opus)** came later, for the writing and a cleanup pass. It rewrote the four markdown
-files, wrote the French glossary, and did the simplification the code needed after the fact —
+files and did the simplification the code needed after the fact —
 collapsing five nearly identical exception handlers in the collector into one classifier, deleting
 migration code for a schema that had never shipped, and removing a `persist_ms` field that was
 passed as zero everywhere and then overwritten.

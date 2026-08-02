@@ -180,7 +180,7 @@ right-censored + 300 left-censored still open. The ledger balances.
 
 ## Run quality
 
-58 attempts, 54 successful, 4 rate-limited (HTTP 429), 0 other failures, 0 left incomplete. Median
+58 attempts, 54 successful, 4 rate-limited (HTTP 429), 0 other failures, 0 interrupted mid-request. Median
 start-to-start gap 120.006 s. The recorded minimum is 119.993 s: the 120 s floor is enforced on a
 **monotonic** clock, and that 7 ms shortfall is drift between the monotonic and wall clocks in the
 stored timestamps, not a request that went out early.
@@ -255,5 +255,4 @@ events, so changing a rule changes the report without re-collecting anything.
 
 Benchmark environment: Apple Silicon macOS, Python 3.11, stdlib SQLite. The 30,000-EVSE
 microbenchmark quoted in [`ARCHITECTURE.md`](ARCHITECTURE.md) measures local headroom only and says
-nothing about multi-source network reliability. French glossary of the technical and business terms
-used here: [`GLOSSAIRE.md`](GLOSSAIRE.md).
+nothing about multi-source network reliability.

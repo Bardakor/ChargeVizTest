@@ -107,5 +107,4 @@ rollback, restart cadence, 429 handling, gzip transport, missing EVSEs and sessi
 |---|---|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Design, invariants, and the path to 100+ sources |
 | [`RESULTS.md`](RESULTS.md) | The number, the session rules, business stakes, and limits |
-| [`GLOSSAIRE.md`](GLOSSAIRE.md) | Glossaire FR des termes techniques et métier |
 | [`AI_USAGE.md`](AI_USAGE.md) | How AI tools were used, and where they were wrong |
