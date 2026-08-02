@@ -76,10 +76,11 @@ bad payloads.
 
 ## Throughput is not the constraint
 
-A synthetic 30,000-EVSE snapshot (10.2× the live feed) parses and reduces in **273–284 ms p95**
-across three consecutive runs — **0.23 %** of the 120 s interval, roughly 108,000 EVSEs/s. In the
-live run the *fetch* took 21.4 s on average (3.76 MB, served uncompressed) against 48 ms of local
-parse + persist. The source owns the latency budget, not the pipeline.
+A synthetic 30,000-EVSE snapshot (10.2× the live feed) parses and reduces in **270–380 ms p95**
+across nine runs — the high end when the machine is busy running the test suite at the same time.
+That is **0.22–0.32 %** of the 120 s interval, or roughly 80,000–105,000 EVSEs/s. In the live run
+the *fetch* took 21.4 s on average (3.76 MB, served uncompressed) against 48 ms of local parse +
+persist. The source owns the latency budget, not the pipeline.
 
 The hard production problems are semantic: stable identity across redeploys, heterogeneous status
 meaning, partial snapshots, source timestamp quality, and transitions that happen entirely between

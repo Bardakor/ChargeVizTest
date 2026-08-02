@@ -6,6 +6,7 @@ import re
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
 from chargeviz.collector import Collector, CollectorConfig
@@ -37,45 +38,182 @@ def _duration_argument(value: str) -> float:
         raise argparse.ArgumentTypeError(str(error)) from error
 
 
-def _minutes(value: float | None) -> str:
-    return "not estimable" if value is None else f"{value / 60:.2f}"
+def _minutes(seconds: float | None) -> str:
+    return "not estimable" if seconds is None else f"{seconds / 60:.2f} min"
+
+
+def _seconds(seconds: float | None) -> str:
+    """Seconds at millisecond precision, with a minutes hint once they stop being readable."""
+    if seconds is None:
+        return "—"
+    # Cadence figures sit around 120 s and their millisecond tail is the interesting part,
+    # so only spell out minutes once the value is long enough to be hard to read.
+    if seconds < 300:
+        return f"{seconds:.3f} s"
+    return f"{seconds:.1f} s ({int(seconds // 60)} m {int(seconds % 60):02d} s)"
+
+
+def _milliseconds(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value / 1000:.1f} s" if value >= 1000 else f"{value:.1f} ms"
+
+
+def _megabytes(value: int) -> str:
+    return f"{value / 1_000_000:.1f} MB"
+
+
+def _clock(timestamp: str | None) -> str:
+    """Render a stored UTC timestamp as `YYYY-MM-DD HH:MM:SS`, dropping microseconds."""
+    if timestamp is None:
+        return "—"
+    return timestamp.replace("T", " ")[:19] + "Z"
+
+
+def _window(report: AnalysisReport) -> str:
+    first, last = report.first_poll_started_at, report.last_poll_completed_at
+    if first is None or last is None:
+        return "no successful poll recorded"
+    span = (
+        datetime.fromisoformat(last.replace("Z", "+00:00"))
+        - datetime.fromisoformat(first.replace("Z", "+00:00"))
+    ).total_seconds()
+    return (
+        f"{_clock(first)} → {_clock(last)} ({int(span // 3600)} h {int(span % 3600 // 60):02d} m)"
+    )
+
+
+def _table(header: tuple[str, ...], rows: list[tuple[str, ...]]) -> list[str]:
+    alignment = ["---"] + ["---:"] * (len(header) - 1)
+    return [
+        "| " + " | ".join(header) + " |",
+        "|" + "|".join(alignment) + "|",
+        *["| " + " | ".join(row) + " |" for row in rows],
+        "",
+    ]
 
 
 def render_markdown(report: AnalysisReport) -> str:
-    return "\n".join(
-        [
-            "## Recomputed metrics",
-            "",
-            "| Metric | Value |",
-            "|---|---:|",
-            f"| Poll attempts | {report.poll_attempt_count} |",
-            f"| Successful polls | {report.successful_poll_count} |",
-            f"| Rate-limited polls | {report.rate_limited_poll_count} |",
-            f"| Other failed polls | {report.failed_poll_count} |",
-            f"| Incomplete (`RUNNING`) polls | {report.running_poll_count} |",
-            f"| Distinct EVSEs | {report.distinct_evse_count} |",
-            f"| Status changes | {report.status_change_count} |",
-            f"| Complete sessions | {report.completed_session_count} |",
-            f"| Average duration (minutes) | {_minutes(report.average_duration_seconds)} |",
-            "| Observation-time average (minutes) | "
-            f"{_minutes(report.observation_time_average_duration_seconds)} |",
-            f"| Median duration (minutes) | {_minutes(report.median_duration_seconds)} |",
-            f"| P90 duration (minutes) | {_minutes(report.p90_duration_seconds)} |",
-            f"| Left-censored sessions | {report.left_censored_session_count} |",
-            f"| Right-censored sessions | {report.right_censored_session_count} |",
-            f"| Ambiguous (`UNKNOWN`) sessions | {report.ambiguous_session_count} |",
-            f"| Observation-time fallbacks | {report.observation_time_fallback_count} |",
-            f"| Gap-affected complete sessions | {report.gap_affected_session_count} |",
-            f"| Gap-free complete sessions | {report.gap_free_session_count} |",
-            "| Gap-free average duration (minutes) | "
-            f"{_minutes(report.gap_free_average_duration_seconds)} |",
-            "| Terminal statuses | "
-            f"`{json.dumps(report.terminal_status_counts, sort_keys=True)}` |",
-            "",
-            f"Observation window (UTC): `{report.first_poll_started_at}` to "
-            f"`{report.last_poll_completed_at}`.",
-        ]
+    complete = report.completed_session_count
+    headline = (
+        f"**Average session duration: {_minutes(report.average_duration_seconds)}** "
+        f"across {complete} complete charging episodes."
     )
+    terminal_total = sum(report.terminal_status_counts.values()) or 1
+
+    def share(count: int, total: int) -> str:
+        return f"{count / total * 100:.1f} %"
+
+    lines = [
+        "# ChargeViz run report",
+        "",
+        headline,
+        "",
+        f"- Observation window (UTC): {_window(report)}",
+        f"- Fleet observed: {report.distinct_evse_count:,} EVSEs, "
+        f"{report.status_change_count:,} status changes recorded",
+        "",
+        "## Session duration",
+        "",
+        "Complete episodes only — both the start and the end were observed.",
+        "",
+        *_table(
+            ("Metric", "Value"),
+            [
+                ("Mean", _minutes(report.average_duration_seconds)),
+                ("Median", _minutes(report.median_duration_seconds)),
+                ("P90 (nearest rank)", _minutes(report.p90_duration_seconds)),
+                ("Shortest", _minutes(report.minimum_duration_seconds)),
+                ("Longest", _minutes(report.maximum_duration_seconds)),
+                ("**Complete episodes (the denominator)**", f"**{complete}**"),
+            ],
+        ),
+        "## Episodes excluded from the mean",
+        "",
+        "Counted and published rather than guessed at.",
+        "",
+        *_table(
+            ("Reason", "Episodes"),
+            [
+                (
+                    "Left-censored — already charging when first seen",
+                    str(report.left_censored_session_count),
+                ),
+                (
+                    "Right-censored — still charging when the run ended",
+                    str(report.right_censored_session_count),
+                ),
+                (
+                    "Ambiguous — ended in `UNKNOWN` or an unmapped status",
+                    str(report.ambiguous_session_count),
+                ),
+                ("Invalid — non-positive duration", str(report.invalid_duration_count)),
+            ],
+        ),
+        "## How complete episodes ended",
+        "",
+        *_table(
+            ("Terminal status", "Count", "Share"),
+            [
+                (f"`{status}`", str(count), share(count, terminal_total))
+                for status, count in sorted(
+                    report.terminal_status_counts.items(), key=lambda item: -item[1]
+                )
+            ],
+        ),
+        "## Sensitivity checks",
+        "",
+        *_table(
+            ("Check", "Value"),
+            [
+                (
+                    "Mean using poll observation time only",
+                    _minutes(report.observation_time_average_duration_seconds),
+                ),
+                (
+                    "Episodes that needed the observation-time fallback",
+                    f"{report.observation_time_fallback_count} of {complete}",
+                ),
+                (
+                    "Episodes spanning a 429 or a collection pause",
+                    f"{report.gap_affected_session_count} of {complete}",
+                ),
+                ("Episodes spanning no gap at all", str(report.gap_free_session_count)),
+                (
+                    "Mean over gap-free episodes *(a short-session bound, not a cleaner estimate)*",
+                    _minutes(report.gap_free_average_duration_seconds),
+                ),
+            ],
+        ),
+        "## Run quality",
+        "",
+        *_table(
+            ("Metric", "Value"),
+            [
+                ("Poll attempts", str(report.poll_attempt_count)),
+                ("Successful", str(report.successful_poll_count)),
+                ("Rate-limited (HTTP 429)", str(report.rate_limited_poll_count)),
+                ("Other failures", str(report.failed_poll_count)),
+                ("Left incomplete (`RUNNING`)", str(report.running_poll_count)),
+                (
+                    "Start-to-start gap, median / minimum",
+                    f"{_seconds(report.median_poll_start_gap_seconds)} / "
+                    f"{_seconds(report.minimum_poll_start_gap_seconds)}",
+                ),
+                (
+                    "Longest gap between successful polls",
+                    _seconds(report.maximum_success_gap_seconds),
+                ),
+                ("Mean fetch time", _milliseconds(report.average_fetch_ms)),
+                ("Mean parse time", _milliseconds(report.average_parse_ms)),
+                ("Mean persist time", _milliseconds(report.average_persist_ms)),
+                ("Total bytes fetched", _megabytes(report.total_response_bytes)),
+            ],
+        ),
+        "Session rules and their interpretation: `RESULTS.md`. "
+        "Machine-readable form: `--format json`.",
+    ]
+    return "\n".join(lines)
 
 
 def _emit_json(event: dict[str, object]) -> None:

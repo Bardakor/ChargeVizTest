@@ -34,10 +34,12 @@ and reports how often it fell back. In this run it fell back twice out of 519, a
 land 1.9 seconds apart — which is itself a result worth having.
 
 The second was a number, and it is the one that bothers me more. `ARCHITECTURE.md` claimed a
-benchmark p95 of 610–681 ms. When I re-ran that benchmark three times before submitting, I got
-273–284 ms, consistently. The old figure did not reproduce on my machine, and I could not
-reconstruct the conditions that produced it. So it is gone, replaced with what I actually measured
-and can re-measure. A number in a document that nobody re-runs is a number that quietly rots, and I
+benchmark p95 of 610–681 ms. When I re-ran that benchmark nine times before submitting, I got
+270–380 ms — the top of that range only when the machine was busy with something else. The old
+figure did not reproduce, and I could not reconstruct the conditions that produced it. So it is
+gone, replaced with a range I actually measured and that spans the load conditions I measured it
+under. Quoting the tight 273–284 ms band from my first three idle runs would have been a second
+version of the same mistake. A number in a document that nobody re-runs is a number that quietly rots, and I
 would rather ship a smaller claim I can defend. In the same pass I noticed the report command was
 running the entire analysis twice for markdown output, because `render_markdown` called `analyze`
 on a path the caller had already analysed. That one was pure AI-written waste and it survived

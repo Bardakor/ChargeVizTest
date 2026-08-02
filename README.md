@@ -82,7 +82,7 @@ Everything except the collection run, in one line from a fresh clone:
 python3 -m venv .venv && source .venv/bin/activate && pip install -q ".[dev]" && pytest -q && ruff check . && ruff format --check . && chargeviz report --db data/chargeviz.sqlite3 && python -m chargeviz.benchmark --evses 30000 --iterations 5
 ```
 
-That is 62 tests (~3 s), the lint and format checks, every `RESULTS.md` figure recomputed from the
+That is 65 tests (~3 s), the lint and format checks, every `RESULTS.md` figure recomputed from the
 committed database, and the 30,000-EVSE benchmark. No network access at any point.
 
 Tests use local fixtures, a local HTTP server, a fake clock and temporary databases — **no calls to
