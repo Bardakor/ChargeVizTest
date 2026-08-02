@@ -194,7 +194,7 @@ def _view(report: AnalysisReport) -> _ReportView:
                     ("Successful", str(report.successful_poll_count)),
                     ("Rate-limited (HTTP 429)", str(report.rate_limited_poll_count)),
                     ("Other failures", str(report.failed_poll_count)),
-                    ("Left incomplete (RUNNING)", str(report.running_poll_count)),
+                    ("Interrupted mid-request (RUNNING)", str(report.running_poll_count)),
                     (
                         "Start-to-start gap, median / minimum",
                         f"{_seconds(report.median_poll_start_gap_seconds)} / "

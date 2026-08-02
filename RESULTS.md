@@ -199,9 +199,13 @@ rather than the shorter hint the server offered. Being allowed back sooner is no
 back sooner.
 
 The 6 min 43 s hole is more honest than that. It has **no attempt row at all**, which means the
-collector process was not running — my machine, not the endpoint. On restart the collector
-re-derived its cadence from the persisted ledger and the 120 s floor held across the boundary.
-I left the gap in rather than re-running for a cleaner-looking dataset.
+collector process was not running — my machine, not the endpoint. Poll 10 completed cleanly at
+17:35:38 and poll 11 started at 17:42:00, and *no* attempt was left in `RUNNING`, so the process
+stopped during the wait rather than mid-request: nothing was half-written. (A poll killed during
+its fetch would have left a `RUNNING` row with a start time and no completion — that is what the
+status is for.) On restart the collector re-derived its cadence from the persisted ledger and the
+120 s floor held across the boundary. I left the gap in rather than re-running for a
+cleaner-looking dataset.
 
 Per-poll cost: fetch 21.4 s mean (p95 22.5 s) for a 3.76 MB uncompressed body, parse 31.5 ms
 median, persist 16.2 ms median. The endpoint owns 99.8 % of the wall time.
