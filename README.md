@@ -2,7 +2,8 @@
 
 Polls Motor Fuel Group's full location snapshot politely, records real EVSE status transitions in
 SQLite, and reconstructs completed `CHARGING` episodes from them. Restart-safe. Runtime code uses
-**only the Python standard library**.
+**only the Python standard library** — the single optional dependency, `rich`, does nothing but
+draw nicer tables.
 
 **Result of the shipped run: average session duration 26.54 min over 519 complete episodes.**
 Method, censoring and caveats: [`RESULTS.md`](RESULTS.md).
@@ -28,9 +29,20 @@ state. Each poll prints one line of JSON metrics.
 ## Read the result
 
 ```bash
-chargeviz report --db data/chargeviz.sqlite3            # markdown table
-chargeviz report --db data/chargeviz.sqlite3 --format json
+chargeviz report --db data/chargeviz.sqlite3                    # sectioned tables (default)
+chargeviz report --db data/chargeviz.sqlite3 --format markdown  # paste into a document
+chargeviz report --db data/chargeviz.sqlite3 --format json      # for machines
 ```
+
+The default `text` format prints aligned tables using the standard library alone. Install the
+optional extra for boxed, coloured output:
+
+```bash
+python -m pip install ".[pretty]"
+```
+
+That pulls in `rich` and nothing else. Without it the same report renders as plain text, and
+`--output` always writes plain text so a file never receives escape codes.
 
 The 2-hour run's database is committed, so every figure in `RESULTS.md` is recomputable without
 touching the network. `data/raw/` (compressed response bodies) is deliberately not in Git.
@@ -79,10 +91,10 @@ sequenceDiagram
 Everything except the collection run, in one line from a fresh clone:
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate && pip install -q ".[dev]" && pytest -q && ruff check . && ruff format --check . && chargeviz report --db data/chargeviz.sqlite3 && python -m chargeviz.benchmark --evses 30000 --iterations 5
+python3 -m venv .venv && source .venv/bin/activate && pip install -q ".[dev,pretty]" && pytest -q && ruff check . && ruff format --check . && chargeviz report --db data/chargeviz.sqlite3 && python -m chargeviz.benchmark --evses 30000 --iterations 5
 ```
 
-That is 65 tests (~3 s), the lint and format checks, every `RESULTS.md` figure recomputed from the
+That is 68 tests (~3 s), the lint and format checks, every `RESULTS.md` figure recomputed from the
 committed database, and the 30,000-EVSE benchmark. No network access at any point.
 
 Tests use local fixtures, a local HTTP server, a fake clock and temporary databases — **no calls to

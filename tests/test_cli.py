@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
-from chargeviz.cli import main, parse_duration, render_markdown
+from chargeviz.cli import main, parse_duration, print_rich, render_markdown, render_text
 from chargeviz.database import Database
 from chargeviz.lock import RunLock
 from chargeviz.models import EVSEObservation, PollTimings
@@ -83,30 +84,74 @@ def test_collect_command_reports_an_existing_collector(
     assert "already running" in capsys.readouterr().err
 
 
-def test_report_states_the_headline_and_every_section(tmp_path: Path) -> None:
+SECTION_TITLES = (
+    "Session duration",
+    "Episodes excluded from the mean",
+    "How complete episodes ended",
+    "Sensitivity checks",
+    "Run quality",
+)
+
+
+def test_markdown_report_states_the_headline_and_every_section(tmp_path: Path) -> None:
     report = render_markdown(analyze(_one_complete_session(tmp_path)))
 
-    assert "**Average session duration: 2.00 min** across 1 complete charging episodes." in report
-    for heading in (
-        "## Session duration",
-        "## Episodes excluded from the mean",
-        "## How complete episodes ended",
-        "## Sensitivity checks",
-        "## Run quality",
-    ):
-        assert heading in report
+    assert "**Average session duration: 2.00 min across 1 complete charging episodes.**" in report
+    for title in SECTION_TITLES:
+        assert f"## {title}" in report
     # Censoring counts must be visible even when they are zero, never silently dropped.
     assert "| Right-censored — still charging when the run ended | 0 |" in report
-    assert "| `AVAILABLE` | 1 | 100.0 % |" in report
+    assert "| AVAILABLE | 1 | 100.0 % |" in report
+
+
+def test_text_report_carries_the_same_content_and_aligns_columns(tmp_path: Path) -> None:
+    report = render_text(analyze(_one_complete_session(tmp_path)))
+
+    assert "Average session duration: 2.00 min across 1 complete charging episodes." in report
+    for title in SECTION_TITLES:
+        assert title in report
+    assert "Right-censored — still charging when the run ended  0" in report
+
+    # Within a section every row is padded to one width, so the values line up.
+    rows = report.split("Session duration\n", 1)[1].split("\n\n")[1].splitlines()
+    assert {line.split()[0] for line in rows} == {
+        "Mean",
+        "Median",
+        "P90",
+        "Shortest",
+        "Longest",
+        "Complete",
+    }
+    assert len({len(line) for line in rows}) == 1
+    assert rows[0].endswith("2.00 min")
+    assert "|" not in report and "**" not in report
 
 
 def test_report_renders_an_empty_database_without_crashing(tmp_path: Path) -> None:
     empty = Database(tmp_path / "empty.sqlite3").path
 
-    report = render_markdown(analyze(empty))
+    for render in (render_markdown, render_text):
+        report = render(analyze(empty))
+        assert "not estimable" in report
+        assert "no successful poll recorded" in report
 
-    assert "not estimable" in report
-    assert "no successful poll recorded" in report
+
+def test_rich_output_is_optional(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without rich installed the CLI must still print, via the plain renderer."""
+    monkeypatch.setitem(sys.modules, "rich", None)
+
+    assert print_rich(analyze(_one_complete_session(tmp_path))) is False
+
+
+def test_text_written_to_a_file_never_contains_escape_codes(tmp_path: Path) -> None:
+    database_path = _one_complete_session(tmp_path)
+    destination = tmp_path / "out" / "report.txt"
+
+    assert main(["report", "--db", str(database_path), "--output", str(destination)]) == 0
+
+    written = destination.read_text(encoding="utf-8")
+    assert "\x1b[" not in written
+    assert "Average session duration: 2.00 min" in written
 
 
 def test_report_json_output_is_machine_readable(

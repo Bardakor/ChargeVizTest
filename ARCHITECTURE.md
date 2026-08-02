@@ -1,7 +1,8 @@
 # Architecture
 
-One synchronous Python process plus SQLite, standard library only. The split that matters is not
-*collector vs. analyzer* — it is **generic core vs. per-source edge**.
+One synchronous Python process plus SQLite, standard library only (`rich` is an optional extra that
+only affects how the report is drawn). The split that matters is not *collector vs. analyzer* — it
+is **generic core vs. per-source edge**.
 
 ```mermaid
 flowchart LR
