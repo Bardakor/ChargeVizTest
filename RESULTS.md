@@ -215,10 +215,12 @@ median, persist 16.2 ms median. The endpoint owns 99.8 % of the wall time.
 362 of the 519 complete sessions span a 429 or the process gap. The other 157 average **11.82 min**
 against 26.54.
 
-That gap is an artefact, not a correction. A session counts as gap-free only if it starts *and* ends
-inside one uninterrupted window, and the longest such window was 46 minutes. The longest gap-free
-session observed is 40.9 minutes, against 98.5 overall. The filter mechanically truncates the
-distribution. **The gap-free mean is a short-session estimate, not a clean one.** It belongs here as
+That gap is an artefact, not a correction. A session counts as gap-free only if its whole
+*uncertainty window* — from the last poll that saw the EVSE not charging through the poll that saw
+it stop — contains no failed poll, no missing-EVSE row, and no interval longer than 1.5× cadence.
+That window opens one poll *before* the start is detected, because the true start is unknowable
+inside it. The longest uninterrupted window was 46 minutes and the longest gap-free session observed
+is 40.9 minutes, against 98.5 overall. The filter mechanically truncates the distribution. **The gap-free mean is a short-session estimate, not a clean one.** It belongs here as
 a sensitivity bound; the headline correctly keeps gap-spanning sessions, because a 429 does not
 invalidate a transition observed both before and after it.
 
