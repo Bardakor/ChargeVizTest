@@ -16,6 +16,7 @@ from chargeviz.http import (
     HTTPStatusFailure,
     NetworkFailure,
     RateLimited,
+    RequestFailure,
 )
 from chargeviz.lock import RunLock
 from chargeviz.mfg import MFGAdapter, PayloadError
@@ -85,6 +86,55 @@ def compute_retry_delay(
     return max(interval_seconds, exponential, retry_after_seconds or 0.0)
 
 
+@dataclass(frozen=True, slots=True)
+class _Failure:
+    """Everything the attempt ledger needs in order to record one failed poll."""
+
+    outcome: str
+    error: str
+    status: int | None = None
+    retry_after_seconds: float | None = None
+    response_bytes: int | None = None
+    fetch_ms: float | None = None
+    payload_sha256: str | None = None
+
+
+# Ordered most specific first: RateLimited is a subclass of HTTPStatusFailure.
+_REQUEST_FAILURE_OUTCOMES: tuple[tuple[type[RequestFailure], str], ...] = (
+    (RateLimited, "RATE_LIMITED"),
+    (HTTPStatusFailure, "HTTP_ERROR"),
+    (NetworkFailure, "NETWORK_ERROR"),
+)
+
+
+def _describe_failure(error: Exception, response: Any | None) -> _Failure:
+    """Map any exception raised during a poll onto the row that will record it."""
+    if isinstance(error, RequestFailure):
+        # The request itself failed, so the transport carries the diagnostic facts.
+        return _Failure(
+            outcome=next(
+                name for kind, name in _REQUEST_FAILURE_OUTCOMES if isinstance(error, kind)
+            ),
+            error=str(error),
+            status=error.status,
+            retry_after_seconds=error.retry_after_seconds,
+            response_bytes=error.response_bytes,
+            fetch_ms=error.elapsed_ms,
+        )
+
+    # A body arrived but could not be turned into a snapshot. Keep what the response
+    # reported and hash the bytes so the failure stays replayable from the archive.
+    rejected_payload = isinstance(error, PayloadError)
+    return _Failure(
+        outcome="INVALID_PAYLOAD" if rejected_payload else "INTERNAL_ERROR",
+        error=str(error) if rejected_payload else f"{type(error).__name__}: {error}",
+        status=200 if rejected_payload else getattr(response, "status", None),
+        response_bytes=getattr(response, "response_bytes", None),
+        fetch_ms=getattr(response, "elapsed_ms", None),
+        payload_sha256=payload_sha256(response.body) if response is not None else None,
+    )
+
+
 class Collector:
     def __init__(
         self,
@@ -137,12 +187,12 @@ class Collector:
                 if self.clock.monotonic() >= deadline:
                     break
 
-            scheduled_at = self.clock.now()
+            # Any wait is already served, so the poll is scheduled and started at once.
             request_started_mono = self.clock.monotonic()
-            started_at = self.clock.now()
+            started_at = _timestamp(self.clock.now())
             poll_id = self.database.start_poll(
-                scheduled_at=_timestamp(scheduled_at),
-                started_at=_timestamp(started_at),
+                scheduled_at=started_at,
+                started_at=started_at,
                 source=self.adapter.source,
             )
             attempts += 1
@@ -150,7 +200,7 @@ class Collector:
                 "poll_started",
                 poll_id=poll_id,
                 source=self.adapter.source,
-                started_at=_timestamp(started_at),
+                started_at=started_at,
             )
             delay = self.config.interval_seconds
             response: Any | None = None
@@ -176,11 +226,7 @@ class Collector:
                     duplicate_count=snapshot.duplicate_count,
                     unknown_status_count=snapshot.unknown_status_count,
                     unrecognized_status_count=snapshot.unrecognized_status_count,
-                    timings=PollTimings(
-                        fetch_ms=response.elapsed_ms,
-                        parse_ms=parse_ms,
-                        persist_ms=0.0,
-                    ),
+                    timings=PollTimings(fetch_ms=response.elapsed_ms, parse_ms=parse_ms),
                 )
                 successes += 1
                 initials += stats.initial_count
@@ -199,146 +245,55 @@ class Collector:
                     persist_ms=round(stats.persist_ms, 3),
                     payload_sha256=digest,
                 )
-            except RateLimited as error:
-                rate_limits += 1
-                consecutive_failures += 1
-                delay = compute_retry_delay(
-                    interval_seconds=self.config.interval_seconds,
-                    retry_after_seconds=error.retry_after_seconds,
-                    consecutive_rate_limits=consecutive_failures,
-                )
-                self.database.fail_poll(
-                    poll_id=poll_id,
-                    completed_at=_timestamp(self.clock.now()),
-                    outcome="RATE_LIMITED",
-                    http_status=error.status,
-                    retry_after_seconds=error.retry_after_seconds,
-                    next_delay_seconds=delay,
-                    response_bytes=error.response_bytes,
-                    fetch_ms=error.elapsed_ms,
-                    error=str(error),
-                )
-                self._emit(
-                    "poll_rate_limited",
-                    poll_id=poll_id,
-                    retry_after_seconds=error.retry_after_seconds,
-                    next_delay_seconds=delay,
-                )
-            except HTTPStatusFailure as error:
-                failures += 1
-                consecutive_failures += 1
-                delay = compute_retry_delay(
-                    interval_seconds=self.config.interval_seconds,
-                    retry_after_seconds=error.retry_after_seconds,
-                    consecutive_rate_limits=consecutive_failures,
-                )
-                self.database.fail_poll(
-                    poll_id=poll_id,
-                    completed_at=_timestamp(self.clock.now()),
-                    outcome="HTTP_ERROR",
-                    http_status=error.status,
-                    retry_after_seconds=error.retry_after_seconds,
-                    next_delay_seconds=delay,
-                    response_bytes=error.response_bytes,
-                    fetch_ms=error.elapsed_ms,
-                    error=str(error),
-                )
-                self._emit(
-                    "poll_failed",
-                    poll_id=poll_id,
-                    outcome="HTTP_ERROR",
-                    error=str(error),
-                    next_delay_seconds=delay,
-                )
-            except NetworkFailure as error:
-                failures += 1
-                consecutive_failures += 1
-                delay = compute_retry_delay(
-                    interval_seconds=self.config.interval_seconds,
-                    retry_after_seconds=None,
-                    consecutive_rate_limits=consecutive_failures,
-                )
-                self.database.fail_poll(
-                    poll_id=poll_id,
-                    completed_at=_timestamp(self.clock.now()),
-                    outcome="NETWORK_ERROR",
-                    next_delay_seconds=delay,
-                    response_bytes=error.response_bytes,
-                    fetch_ms=error.elapsed_ms,
-                    error=str(error),
-                )
-                self._emit(
-                    "poll_failed",
-                    poll_id=poll_id,
-                    outcome="NETWORK_ERROR",
-                    error=str(error),
-                    next_delay_seconds=delay,
-                )
-            except PayloadError as error:
-                failures += 1
-                consecutive_failures += 1
-                delay = compute_retry_delay(
-                    interval_seconds=self.config.interval_seconds,
-                    retry_after_seconds=None,
-                    consecutive_rate_limits=consecutive_failures,
-                )
-                self.database.fail_poll(
-                    poll_id=poll_id,
-                    completed_at=_timestamp(self.clock.now()),
-                    outcome="INVALID_PAYLOAD",
-                    http_status=200,
-                    next_delay_seconds=delay,
-                    payload_sha256=(
-                        payload_sha256(response.body) if response is not None else None
-                    ),
-                    response_bytes=(response.response_bytes if response is not None else None),
-                    fetch_ms=response.elapsed_ms if response is not None else None,
-                    error=str(error),
-                )
-                self._emit(
-                    "poll_failed",
-                    poll_id=poll_id,
-                    outcome="INVALID_PAYLOAD",
-                    error=str(error),
-                    next_delay_seconds=delay,
-                )
             except Exception as error:
-                failures += 1
+                failure = _describe_failure(error, response)
+                rate_limited = failure.outcome == "RATE_LIMITED"
+                rate_limits += int(rate_limited)
+                failures += int(not rate_limited)
                 consecutive_failures += 1
                 delay = compute_retry_delay(
                     interval_seconds=self.config.interval_seconds,
-                    retry_after_seconds=None,
+                    retry_after_seconds=failure.retry_after_seconds,
                     consecutive_rate_limits=consecutive_failures,
                 )
                 try:
                     self.database.fail_poll(
                         poll_id=poll_id,
                         completed_at=_timestamp(self.clock.now()),
-                        outcome="INTERNAL_ERROR",
-                        http_status=response.status if response is not None else None,
+                        outcome=failure.outcome,
+                        http_status=failure.status,
+                        retry_after_seconds=failure.retry_after_seconds,
                         next_delay_seconds=delay,
-                        payload_sha256=(
-                            payload_sha256(response.body) if response is not None else None
-                        ),
-                        response_bytes=(response.response_bytes if response is not None else None),
-                        fetch_ms=response.elapsed_ms if response is not None else None,
-                        error=f"{type(error).__name__}: {error}",
+                        payload_sha256=failure.payload_sha256,
+                        response_bytes=failure.response_bytes,
+                        fetch_ms=failure.fetch_ms,
+                        error=failure.error,
                     )
                 except Exception:
+                    # The ledger is the only record that this attempt happened; if it
+                    # cannot be written, the cadence guarantee no longer holds on restart.
                     self._emit(
                         "poll_failed",
                         poll_id=poll_id,
                         outcome="UNRECOVERABLE_INTERNAL_ERROR",
-                        error=f"{type(error).__name__}: {error}",
+                        error=failure.error,
                     )
                     raise
-                self._emit(
-                    "poll_failed",
-                    poll_id=poll_id,
-                    outcome="INTERNAL_ERROR",
-                    error=f"{type(error).__name__}: {error}",
-                    next_delay_seconds=delay,
-                )
+                if rate_limited:
+                    self._emit(
+                        "poll_rate_limited",
+                        poll_id=poll_id,
+                        retry_after_seconds=failure.retry_after_seconds,
+                        next_delay_seconds=delay,
+                    )
+                else:
+                    self._emit(
+                        "poll_failed",
+                        poll_id=poll_id,
+                        outcome=failure.outcome,
+                        error=failure.error,
+                        next_delay_seconds=delay,
+                    )
 
             next_due = request_started_mono + delay
 

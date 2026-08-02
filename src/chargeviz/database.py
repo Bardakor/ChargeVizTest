@@ -10,7 +10,14 @@ from pathlib import Path
 
 from chargeviz.models import EVSEObservation, PollTimings, SnapshotStats
 
-SCHEMA = """
+# Outcomes a poll can end in. Failure outcomes are the ones `fail_poll` accepts;
+# the CHECK constraint below is generated from the same values so the two cannot drift.
+FAILURE_OUTCOMES = frozenset(
+    {"RATE_LIMITED", "HTTP_ERROR", "NETWORK_ERROR", "INVALID_PAYLOAD", "INTERNAL_ERROR"}
+)
+POLL_OUTCOMES = frozenset({"RUNNING", "SUCCESS"}) | FAILURE_OUTCOMES
+
+SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS poll_runs (
     poll_id INTEGER PRIMARY KEY,
     source TEXT NOT NULL,
@@ -18,10 +25,7 @@ CREATE TABLE IF NOT EXISTS poll_runs (
     started_at TEXT NOT NULL,
     completed_at TEXT,
     outcome TEXT NOT NULL CHECK (
-        outcome IN (
-            'RUNNING', 'SUCCESS', 'RATE_LIMITED', 'HTTP_ERROR',
-            'NETWORK_ERROR', 'INVALID_PAYLOAD', 'INTERNAL_ERROR'
-        )
+        outcome IN ({", ".join(repr(name) for name in sorted(POLL_OUTCOMES))})
     ),
     http_status INTEGER,
     retry_after_seconds REAL,
@@ -137,31 +141,6 @@ class Database:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("PRAGMA synchronous = NORMAL")
             connection.executescript(SCHEMA)
-            columns = {
-                str(row["name"])
-                for row in connection.execute("PRAGMA table_info(poll_runs)").fetchall()
-            }
-            if "next_delay_seconds" not in columns:
-                connection.execute("ALTER TABLE poll_runs ADD COLUMN next_delay_seconds REAL")
-            if "unrecognized_status_count" not in columns:
-                connection.execute(
-                    "ALTER TABLE poll_runs ADD COLUMN unrecognized_status_count INTEGER"
-                )
-                connection.execute(
-                    """
-                    UPDATE poll_runs
-                    SET unrecognized_status_count = unknown_status_count
-                    WHERE unrecognized_status_count IS NULL
-                    """
-                )
-            event_columns = {
-                str(row["name"])
-                for row in connection.execute("PRAGMA table_info(status_events)").fetchall()
-            }
-            if "previous_poll_id" not in event_columns:
-                connection.execute("ALTER TABLE status_events ADD COLUMN previous_poll_id INTEGER")
-            if "previous_observed_at" not in event_columns:
-                connection.execute("ALTER TABLE status_events ADD COLUMN previous_observed_at TEXT")
 
     def start_poll(
         self,
@@ -439,18 +418,10 @@ class Database:
         next_delay_seconds: float | None = None,
         response_bytes: int | None = None,
         fetch_ms: float | None = None,
-        parse_ms: float | None = None,
         payload_sha256: str | None = None,
         error: str,
     ) -> None:
-        allowed = {
-            "RATE_LIMITED",
-            "HTTP_ERROR",
-            "NETWORK_ERROR",
-            "INVALID_PAYLOAD",
-            "INTERNAL_ERROR",
-        }
-        if outcome not in allowed:
+        if outcome not in FAILURE_OUTCOMES:
             raise ValueError(f"unsupported failure outcome {outcome!r}")
         with self.connection() as connection:
             updated = connection.execute(
@@ -458,7 +429,7 @@ class Database:
                 UPDATE poll_runs
                 SET completed_at = ?, outcome = ?, http_status = ?,
                     retry_after_seconds = ?, next_delay_seconds = ?,
-                    response_bytes = ?, fetch_ms = ?, parse_ms = ?,
+                    response_bytes = ?, fetch_ms = ?,
                     payload_sha256 = ?, error = ?
                 WHERE poll_id = ? AND outcome = 'RUNNING'
                 """,
@@ -470,7 +441,6 @@ class Database:
                     next_delay_seconds,
                     response_bytes,
                     fetch_ms,
-                    parse_ms,
                     payload_sha256,
                     error[:2000],
                     poll_id,

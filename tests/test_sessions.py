@@ -38,7 +38,7 @@ def ingest(
         connector_count=len(observations),
         duplicate_count=0,
         unknown_status_count=0,
-        timings=PollTimings(fetch_ms=1.0, parse_ms=1.0, persist_ms=0.0),
+        timings=PollTimings(fetch_ms=1.0, parse_ms=1.0),
     )
 
 

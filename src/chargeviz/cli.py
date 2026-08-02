@@ -12,6 +12,7 @@ from chargeviz.collector import Collector, CollectorConfig
 from chargeviz.database import Database
 from chargeviz.http import HTTPClient
 from chargeviz.lock import ConcurrentCollectorError
+from chargeviz.models import AnalysisReport
 from chargeviz.sessions import analyze
 
 DEFAULT_URL = "https://opendata.motorfuelgroup.net/locations"
@@ -40,8 +41,7 @@ def _minutes(value: float | None) -> str:
     return "not estimable" if value is None else f"{value / 60:.2f}"
 
 
-def render_markdown(db_path: Path) -> str:
-    report = analyze(db_path)
+def render_markdown(report: AnalysisReport) -> str:
     return "\n".join(
         [
             "## Recomputed metrics",
@@ -142,7 +142,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     content = (
         json.dumps(asdict(report), indent=2, sort_keys=True)
         if args.format == "json"
-        else render_markdown(args.db)
+        else render_markdown(report)
     )
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -143,20 +143,18 @@ class HTTPClient:
                         response_bytes=len(wire_body),
                         elapsed_ms=elapsed_ms,
                     )
-                encoding = response.headers.get("Content-Encoding", "").lower()
-                body = (
-                    self._decompress_limited(wire_body, elapsed_ms)
-                    if encoding == "gzip"
-                    else wire_body
-                )
-                if len(body) > self.max_decompressed_bytes:
-                    raise NetworkFailure(
-                        message=(
-                            f"decompressed response exceeded {self.max_decompressed_bytes} bytes"
-                        ),
-                        elapsed_ms=elapsed_ms,
-                        response_bytes=len(wire_body),
-                    )
+                if response.headers.get("Content-Encoding", "").lower() == "gzip":
+                    body = self._decompress_limited(wire_body, elapsed_ms)
+                else:
+                    # An identity body is only capped by max_response_bytes so far, which
+                    # may be the looser of the two limits.
+                    body = wire_body
+                    if len(body) > self.max_decompressed_bytes:
+                        raise NetworkFailure(
+                            message=f"response body exceeded {self.max_decompressed_bytes} bytes",
+                            elapsed_ms=elapsed_ms,
+                            response_bytes=len(wire_body),
+                        )
                 return HTTPResponse(
                     status=int(response.status),
                     body=body,

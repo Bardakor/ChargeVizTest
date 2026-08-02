@@ -88,7 +88,7 @@ def run_benchmark(
             duplicate_count=snapshot.duplicate_count,
             unknown_status_count=snapshot.unknown_status_count,
             unrecognized_status_count=snapshot.unrecognized_status_count,
-            timings=PollTimings(fetch_ms=0.0, parse_ms=parse_ms, persist_ms=0.0),
+            timings=PollTimings(fetch_ms=0.0, parse_ms=parse_ms),
         )
         parse_samples.append(parse_ms)
         persist_samples.append(stats.persist_ms)

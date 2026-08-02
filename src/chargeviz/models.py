@@ -30,9 +30,10 @@ class EVSEObservation:
 
 @dataclass(frozen=True, slots=True)
 class PollTimings:
+    """Timings measured before persistence; the write itself is timed by the database."""
+
     fetch_ms: float
     parse_ms: float
-    persist_ms: float
 
 
 @dataclass(frozen=True, slots=True)

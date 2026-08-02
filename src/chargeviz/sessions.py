@@ -4,6 +4,7 @@ import math
 import sqlite3
 import statistics
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,18 @@ def _parse(value: str) -> datetime:
 
 def _seconds(start: str, end: str) -> float:
     return (_parse(end) - _parse(start)).total_seconds()
+
+
+def _start_gaps(rows: Sequence[sqlite3.Row]) -> list[float]:
+    """Seconds between the starts of consecutive polls."""
+    times = [_parse(str(row["started_at"])) for row in rows]
+    return [
+        (later - earlier).total_seconds() for earlier, later in zip(times, times[1:], strict=False)
+    ]
+
+
+def _average_column(rows: Sequence[sqlite3.Row], column: str) -> float | None:
+    return _mean([float(row[column]) for row in rows if row[column] is not None])
 
 
 @dataclass(slots=True)
@@ -200,16 +213,8 @@ def analyze(
     durations.sort()
     percentile_90 = durations[max(0, math.ceil(0.9 * len(durations)) - 1)] if durations else None
     successful = [row for row in polls if row["outcome"] == "SUCCESS"]
-    started_times = [_parse(str(row["started_at"])) for row in polls]
-    start_gaps = [
-        (current - previous).total_seconds()
-        for previous, current in zip(started_times, started_times[1:], strict=False)
-    ]
-    success_times = [_parse(str(row["started_at"])) for row in successful]
-    success_gaps = [
-        (current - previous).total_seconds()
-        for previous, current in zip(success_times, success_times[1:], strict=False)
-    ]
+    start_gaps = _start_gaps(polls)
+    success_gaps = _start_gaps(successful)
 
     return AnalysisReport(
         completed_session_count=len(durations),
@@ -246,14 +251,8 @@ def analyze(
         minimum_poll_start_gap_seconds=min(start_gaps) if start_gaps else None,
         median_poll_start_gap_seconds=statistics.median(start_gaps) if start_gaps else None,
         maximum_success_gap_seconds=max(success_gaps) if success_gaps else None,
-        average_fetch_ms=_mean(
-            [float(row["fetch_ms"]) for row in successful if row["fetch_ms"] is not None]
-        ),
-        average_parse_ms=_mean(
-            [float(row["parse_ms"]) for row in successful if row["parse_ms"] is not None]
-        ),
-        average_persist_ms=_mean(
-            [float(row["persist_ms"]) for row in successful if row["persist_ms"] is not None]
-        ),
+        average_fetch_ms=_average_column(successful, "fetch_ms"),
+        average_parse_ms=_average_column(successful, "parse_ms"),
+        average_persist_ms=_average_column(successful, "persist_ms"),
         total_response_bytes=sum(int(row["response_bytes"] or 0) for row in polls),
     )

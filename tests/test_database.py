@@ -43,7 +43,7 @@ def complete(
         connector_count=len(observations),
         duplicate_count=0,
         unknown_status_count=0,
-        timings=PollTimings(fetch_ms=10.0, parse_ms=2.0, persist_ms=0.0),
+        timings=PollTimings(fetch_ms=10.0, parse_ms=2.0),
     )
 
 
@@ -162,7 +162,7 @@ def test_snapshot_business_updates_are_atomic(tmp_path: Path) -> None:
             connector_count=2,
             duplicate_count=0,
             unknown_status_count=0,
-            timings=PollTimings(fetch_ms=10.0, parse_ms=2.0, persist_ms=0.0),
+            timings=PollTimings(fetch_ms=10.0, parse_ms=2.0),
         )
 
     assert scalar(path, "SELECT COUNT(*) FROM current_evse_state") == 0
